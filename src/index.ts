@@ -101,44 +101,53 @@ class VideoLinkExtractor {
         try {
           const plyrHtml = await this.fetchHtml(plyrLink);
 
-          const virtualConsole = new VirtualConsole();
-          virtualConsole.on("error", () => { });
-          virtualConsole.on("warn", () => { });
-          virtualConsole.on("log", () => { });
+          // Method 1: Direct regex search in HTML
+          const m3u8Matches = plyrHtml.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi);
+          if (m3u8Matches) {
+            m3u8Matches.forEach(m => this.addVideoUrl(m));
+          }
 
-          const dom = new JSDOM(plyrHtml, {
-            url: plyrLink,
-            runScripts: "dangerously",
-            resources: "usable",
-            virtualConsole,
-            beforeParse(window) {
-              // @ts-ignore
-              window.TextEncoder = TextEncoder;
-              // @ts-ignore
-              window.TextDecoder = TextDecoder;
-              // @ts-ignore
-              window.jwplayer = () => ({ setup: () => { }, on: () => { } });
+          // Method 2: Try JSDOM only if no matches found
+          if (this.foundUrls.size === 0) {
+            try {
+              const virtualConsole = new VirtualConsole();
+              virtualConsole.on("error", () => { });
+              virtualConsole.on("warn", () => { });
+              virtualConsole.on("log", () => { });
+
+              const dom = new JSDOM(plyrHtml, {
+                url: plyrLink,
+                runScripts: "dangerously",
+                resources: "usable",
+                virtualConsole,
+                beforeParse(window) {
+                  // @ts-ignore
+                  window.TextEncoder = TextEncoder;
+                  // @ts-ignore
+                  window.TextDecoder = TextDecoder;
+                  // @ts-ignore
+                  window.jwplayer = () => ({ setup: () => { }, on: () => { } });
+                }
+              });
+
+              await new Promise(resolve => setTimeout(resolve, 750));
+
+              const doc = dom.window.document;
+
+              doc.querySelectorAll('script').forEach(s => {
+                const t = s.textContent || '';
+                const matches = t.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi);
+                if (matches) matches.forEach(m => this.addVideoUrl(m));
+              });
+
+              dom.window.close();
+            } catch (jsdomError) {
+              // JSDOM failed, but we may have found links via regex
             }
-          });
-
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          const doc = dom.window.document;
-
-          const htmlContent = doc.documentElement.innerHTML;
-          const matchA = htmlContent.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-          if (matchA) this.addVideoUrl(matchA[0]);
-
-          doc.querySelectorAll('script').forEach(s => {
-            const t = s.textContent || '';
-            const matches = t.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi);
-            if (matches) matches.forEach(m => this.addVideoUrl(m));
-          });
-
-          dom.window.close();
+          }
 
         } catch (e) {
-          // Ignore JSDOM errors
+          // Ignore fetch errors
         }
       }
 
